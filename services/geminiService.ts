@@ -1,13 +1,9 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { DocumentData } from '../types';
 
-// 1. LEER LA API KEY (esto está bien)
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-
-// Inicializar cliente
 const genAI = new GoogleGenerativeAI(API_KEY || '');
 
-// Función auxiliar para convertir archivo a base64
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -21,61 +17,61 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
+// Función que intenta generar contenido con varios modelos
+async function generateWithFallback(base64Data: string, mimeType: string) {
+  // Lista de modelos a probar en orden
+  const modelsToTry = [
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-pro-vision', // El antiguo, por si acaso
+    'gemini-1.0-pro'
+  ];
+
+  const prompt = `Analiza este documento financiero. Devuelve JSON estricto: { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "Empresa", "total": 100.00, "conceptos": ["item1"] }`;
+  
+  let lastError;
+
+  for (const modelName of modelsToTry) {
+    try {
+      console.log(`🔄 Probando modelo: ${modelName}...`);
+      const model = genAI.getGenerativeModel({ model: modelName });
+      
+      const result = await model.generateContent([
+        prompt,
+        { inlineData: { mimeType: mimeType, data: base64Data } }
+      ]);
+      
+      console.log(`✅ ¡Éxito con el modelo ${modelName}!`);
+      return result; // Si funciona, devuelve el resultado y sale
+      
+    } catch (error: any) {
+      console.warn(`⚠️ Falló el modelo ${modelName}:`, error.message);
+      lastError = error;
+      // Continúa con el siguiente modelo...
+    }
+  }
+  
+  // Si llegamos aquí, fallaron todos
+  throw lastError;
+}
+
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
   console.log(`📄 Procesando archivo: ${file.name}`);
-
-  if (!API_KEY) {
-    throw new Error("Falta la API Key de Gemini. Revisa la configuración en Vercel.");
-  }
+  if (!API_KEY) throw new Error("Falta API Key");
 
   try {
-    // 2. PREPARAR DATOS
     const base64Data = await fileToBase64(file);
     
-    // ✅ LA SOLUCIÓN DEFINITIVA: Usar el modelo 'gemini-pro-vision'
-    // Este es el modelo estable para analizar imágenes y texto.
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro-vision' });
-
-    const prompt = `
-      Analiza la imagen de este documento financiero (factura, ticket o albarán).
-      Extrae la siguiente información en un formato JSON estricto y sin texto adicional:
-      {
-        "tipo": "Factura",
-        "fecha": "DD/MM/YYYY",
-        "proveedor": "Nombre de la Empresa",
-        "total": 123.45,
-        "conceptos": ["item 1", "item 2"]
-      }
-    `;
-
-    // 3. LLAMADA A GEMINI
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType: file.type,
-          data: base64Data,
-        },
-      },
-    ]);
+    // Llamamos a nuestra función "todo terreno"
+    const result = await generateWithFallback(base64Data, file.type);
 
     const response = await result.response;
     const text = response.text();
-    console.log('✅ Respuesta Gemini:', text);
-
-    // 4. LIMPIEZA Y PARSEO
-    const cleanedText = text.replace(/``````/g, '').trim();
     
-    let json;
-    try {
-        json = JSON.parse(cleanedText);
-    } catch (e) {
-        console.error("Error parseando JSON. La respuesta de la IA no era válida:", cleanedText);
-        throw new Error("La IA devolvió un formato inesperado.");
-    }
+    const cleanedText = text.replace(/``````/g, '').trim();
+    const json = JSON.parse(cleanedText);
 
-    // 5. MAPEO DE DATOS
-    const data = {
+    return {
       documentType: json.tipo || 'Desconocido',
       document_type: json.tipo || 'Desconocido',
       type: json.tipo || 'Desconocido',
@@ -83,12 +79,10 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
       supplier: json.proveedor || 'No identificado',
       total: typeof json.total === 'number' ? json.total : parseFloat(json.total) || 0,
       items: json.conceptos || []
-    };
+    } as any;
 
-    return data as any;
-
-  } catch (error) {
-    console.error('❌ Error en analyzeDocument:', error);
-    throw error;
+  } catch (error: any) {
+    console.error('❌ Error FINAL:', error);
+    throw new Error(`Error de IA: ${error.message}`);
   }
 };
