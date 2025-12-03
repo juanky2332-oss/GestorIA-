@@ -19,13 +19,11 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
   try {
     const base64Data = await fileToBase64(file);
     
-    // ✅ CAMBIO CLAVE: Usamos el alias genérico 'gemini-flash-latest'
-    // Esto asegura que siempre use la última versión activa (ahora mismo la 2.5)
-    // y no falle si Google retira la anterior.
-    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
+    // Usamos 'gemini-1.5-flash' que es el estándar rápido
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
     const result = await model.generateContent([
-      `Analiza este documento financiero. Devuelve SOLO JSON válido: 
+      `Analiza este documento. Devuelve SOLO JSON válido: 
       { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "x", "total": 0, "conceptos": [] }`,
       { inlineData: { mimeType: file.type, data: base64Data } }
     ]);
@@ -33,8 +31,16 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     const response = await result.response;
     let text = response.text();
 
-    // Limpieza simple y efectiva
-    text = text.replace(/json/gi, '').replace(/```
+    // --- LIMPIEZA SEGURA (SIN EXPRESIONES REGULARES RARAS) ---
+    // 1. Quitamos la palabra 'json' si sale
+    text = text.replace(/json/gi, '');
+    
+    // 2. Quitamos las tres tildes (```
+    text = text.split('```').join('');
+    
+    // 3. Limpiamos espacios
+    text = text.trim();
+    // ---------------------------------------------------------
 
     const json = JSON.parse(text);
 
@@ -50,10 +56,6 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
 
   } catch (error: any) {
     console.error('Error IA:', error);
-    // Si falla, intentamos con el modelo específico 2.5 como respaldo manual
-    if (error.message.includes('404')) {
-       throw new Error("El modelo de IA antiguo ha caducado. Intenta actualizar la librería o usar 'gemini-2.5-flash'.");
-    }
-    throw error;
+    throw new Error("Error al analizar: " + error.message);
   }
 };
