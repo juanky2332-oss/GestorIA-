@@ -1,20 +1,15 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-// Importamos DocumentData pero usaremos 'any' en el return para evitar conflictos de tipos
 import type { DocumentData } from '../types';
 
-// 1. LEER LA API KEY
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-
-// Inicializar cliente
 const genAI = new GoogleGenerativeAI(API_KEY || '');
 
-// Función auxiliar para convertir archivo a base64
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      const base64 = result.includes(',') ? result.split(',') : result;[1]
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
       resolve(base64);
     };
     reader.onerror = reject;
@@ -23,35 +18,22 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
-  // Log para depuración
   console.log(`📄 Procesando archivo: ${file.name}`);
 
   if (!API_KEY) {
-    console.error("❌ FATAL: No hay API Key configurada en Vercel (VITE_GEMINI_API_KEY)");
     throw new Error("Falta la API Key de Gemini");
   }
 
   try {
-    // 2. PREPARAR DATOS
     const base64Data = await fileToBase64(file);
-    
-    // Usamos modelo latest para evitar errores 404
     const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
     const prompt = `
-      Analiza este documento financiero (factura, ticket o albarán).
-      Extrae la siguiente información en formato JSON estricto:
-      - tipo (String: "Factura", "Ticket", "Albarán" u "Otro")
-      - fecha (String: formato DD/MM/YYYY)
-      - proveedor (String: nombre de la empresa o emisor)
-      - total (Number: importe total numérico)
-      - conceptos (Array de Strings: lista de items comprados)
-
-      Si algún campo no se encuentra, usa valores vacíos o 0.
-      Responde SOLO con el JSON, sin bloques de código markdown.
+      Analiza este documento financiero.
+      Extrae JSON estricto:
+      - tipo, fecha, proveedor, total, conceptos (array)
     `;
 
-    // 3. LLAMADA A GEMINI
     const result = await model.generateContent([
       prompt,
       {
@@ -64,20 +46,18 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
 
     const response = await result.response;
     const text = response.text();
-    console.log('✅ Respuesta Gemini:', text);
-
-    // 4. LIMPIEZA Y PARSEO
-    const cleanedText = text.replace(/```json/gi, '').replace(/```
+    
+    // ✅ LIMPIEZA SEGURA (sin regex complejas)
+    const cleanedText = text.split('``````').join('').trim();
       
     let json;
     try {
         json = JSON.parse(cleanedText);
     } catch (e) {
-        console.error("Error parseando JSON:", cleanedText);
-        throw new Error("La respuesta de la IA no fue un JSON válido");
+        console.error("Error JSON:", cleanedText);
+        throw new Error("Respuesta no válida");
     }
 
-    // 5. MAPEO DE DATOS
     const data = {
       documentType: json.tipo || 'Desconocido',
       document_type: json.tipo || 'Desconocido',
@@ -91,7 +71,7 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     return data as any;
 
   } catch (error) {
-    console.error('❌ Error en analyzeDocument:', error);
+    console.error('❌ Error:', error);
     throw error;
   }
 };
