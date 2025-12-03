@@ -1,9 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DocumentData } from "../types";
 
-// Initialize the Google GenAI SDK
-// The API key must be obtained exclusively from the environment variable process.env.API_KEY
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// ✅ LÍNEA CORREGIDA PARA VITE
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY || "AIzaSyBfvevq0hRmuCAZimNFWUz85ilZ8zKeVhw" });
 
 const fileToGenerativePart = async (file: File) => {
   const base64EncodedDataPromise = new Promise<string>((resolve) => {
