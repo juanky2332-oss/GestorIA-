@@ -1,15 +1,44 @@
 import type { DocumentData } from '../types';
+// @ts-ignore
+import * as pdfjsLib from 'pdfjs-dist/build/pdf';
 
-// 1. LEEMOS LA CLAVE DE OPENAI
+// Configuración del Worker de PDF (Esencial para que funcione en el navegador)
+// Usamos un CDN público para no complicar la configuración de Vite
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+
 const API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 
-// Función para convertir imagen a Base64
+// --- FUNCIÓN 1: Convertir PDF a Imagen JPG (Base64) ---
+const convertPdfToImage = async (file: File): Promise<string> => {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  
+  // Cogemos solo la primera página (la portada de la factura)
+  const page = await pdf.getPage(1);
+  
+  // Renderizamos a una escala x2 para buena calidad (que OpenAI lea bien el texto)
+  const viewport = page.getViewport({ scale: 2.0 });
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  
+  canvas.height = viewport.height;
+  canvas.width = viewport.width;
+
+  if (!context) throw new Error("No se pudo crear el contexto gráfico para leer el PDF.");
+
+  await page.render({ canvasContext: context, viewport: viewport }).promise;
+  
+  // Convertimos el dibujo del canvas a imagen JPG base64
+  const base64 = canvas.toDataURL('image/jpeg', 0.85);
+  return base64.split(',')[1]; 
+};
+
+// --- FUNCIÓN 2: Convertir Archivo Normal a Base64 ---
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      // Limpiamos la cabecera "data:image/..." si existe para quedarnos solo con los datos
       const base64 = result.includes(',') ? result.split(',')[1] : result;
       resolve(base64);
     };
@@ -18,29 +47,33 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-// Esta función se sigue llamando igual para no romper el resto de la app
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
-  
-  // Validación de seguridad
   if (!API_KEY) {
-    console.error("❌ FALTA LA CLAVE: No se encontró VITE_OPENAI_API_KEY");
-    throw new Error("Falta la API Key de OpenAI. Revisa Vercel.");
-  }
-
-  // Validación de tipo de archivo (OpenAI Vision solo acepta imágenes)
-  if (file.type === 'application/pdf') {
-    throw new Error("⚠️ OpenAI no lee PDFs directamente. Por favor, sube una captura de pantalla (JPG/PNG) de la factura.");
+    console.error("❌ FALTA CLAVE OPENAI");
+    throw new Error("Falta la API Key de OpenAI en Vercel.");
   }
 
   try {
-    console.log(`🤖 Enviando ${file.name} a OpenAI GPT-4o...`);
-    const base64Data = await fileToBase64(file);
+    console.log(`📄 Procesando archivo: ${file.name} (${file.type})`);
 
-    // ✅ CORRECCIÓN DEL ERROR 400:
-    // Aseguramos que el MIME type sea válido. Si viene vacío o raro, forzamos 'image/jpeg'.
-    const validMimeType = (file.type && file.type.startsWith('image/')) ? file.type : 'image/jpeg';
+    let base64Data = '';
+    let mimeType = 'image/jpeg'; // Por defecto asumiremos JPG (incluso para PDFs convertidos)
 
-    // 2. LLAMADA DIRECTA A LA API DE OPENAI
+    // LÓGICA DE CONVERSIÓN
+    if (file.type === 'application/pdf') {
+      console.log("🔄 Detectado PDF: Convirtiendo a imagen...");
+      base64Data = await convertPdfToImage(file);
+      // mimeType ya es 'image/jpeg' por defecto
+    } else {
+      // Es una imagen normal
+      base64Data = await fileToBase64(file);
+      // Aseguramos que el mimeType sea válido
+      mimeType = (file.type && file.type.startsWith('image/')) ? file.type : 'image/jpeg';
+    }
+
+    console.log(`🤖 Enviando imagen (${mimeType}) a OpenAI...`);
+
+    // LLAMADA A OPENAI
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -48,52 +81,41 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
         'Authorization': `Bearer ${API_KEY}`
       },
       body: JSON.stringify({
-        model: "gpt-4o", // Modelo más inteligente y rápido actual
+        model: "gpt-4o",
         messages: [
           {
             role: "user",
             content: [
               { 
                 type: "text", 
-                text: "Eres un experto contable. Analiza esta imagen. Extrae los datos en formato JSON estricto: { \"tipo\": \"Factura\" o \"Ticket\", \"fecha\": \"DD/MM/YYYY\", \"proveedor\": \"Nombre\", \"total\": 0.00, \"conceptos\": [\"item1\", \"item2\"] }. Si no encuentras algo pon null." 
+                text: "Analiza este documento financiero. Extrae JSON estricto: { \"tipo\": \"Factura\", \"fecha\": \"DD/MM/YYYY\", \"proveedor\": \"Nombre\", \"total\": 0.00, \"conceptos\": [\"item1\"] }. Si algún campo no está claro, pon null." 
               },
               {
                 type: "image_url",
                 image_url: {
-                  // Aquí usamos el MIME type corregido
-                  url: `data:${validMimeType};base64,${base64Data}`
+                  url: `data:${mimeType};base64,${base64Data}`
                 }
               }
             ]
           }
         ],
-        response_format: { type: "json_object" }, // Obliga a responder en JSON
-        temperature: 0 // Máxima precisión
+        response_format: { type: "json_object" },
+        temperature: 0
       })
     });
 
-    // 3. GESTIÓN DE ERRORES
     if (!response.ok) {
       const errorData = await response.json();
-      console.error("❌ Error OpenAI:", errorData);
-      
-      if (response.status === 400 && errorData.error?.message?.includes('image')) {
-         throw new Error("El formato de la imagen no es compatible. Prueba con JPG o PNG.");
-      }
-      if (response.status === 401) throw new Error("API Key inválida o incorrecta.");
-      if (response.status === 429) throw new Error("Te has quedado sin saldo en OpenAI (Revisa Billing).");
-      
-      throw new Error(`Error OpenAI (${response.status}): ${errorData.error?.message}`);
+      console.error("❌ Error API:", errorData);
+      throw new Error(errorData.error?.message || "Error desconocido de OpenAI");
     }
 
-    // 4. PROCESAR RESPUESTA
     const data = await response.json();
     const content = data.choices[0].message.content;
-    console.log("✅ Respuesta recibida:", content);
+    console.log("✅ Respuesta IA:", content);
 
     const json = JSON.parse(content);
 
-    // 5. DEVOLVER DATOS AL FRONTEND
     return {
       documentType: json.tipo || 'Desconocido',
       document_type: json.tipo || 'Desconocido',
@@ -105,7 +127,11 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     } as any;
 
   } catch (error: any) {
-    console.error('❌ Error en el proceso:', error);
+    console.error('❌ Error Fatal:', error);
+    // Mensaje amigable si falla el PDF
+    if (error.message.includes('pdf')) {
+        throw new Error("Error al leer el PDF. Prueba a subir una imagen JPG/PNG.");
+    }
     throw error;
   }
 };
