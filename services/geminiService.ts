@@ -6,7 +6,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 
 const API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 
-// --- CONVERSORES DE IMAGEN (Se mantienen igual) ---
+// --- CONVERSORES DE IMAGEN ---
 const convertPdfToImage = async (file: File): Promise<string> => {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -30,15 +30,22 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
+// Función para limpiar números
+function parseNum(val: any): number {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const clean = val.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
+  return parseFloat(clean) || 0;
+}
+
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
   if (!API_KEY) throw new Error("Falta API Key OpenAI");
 
   try {
     console.log(`📄 Procesando: ${file.name}`);
     let base64Data = file.type === 'application/pdf' ? await convertPdfToImage(file) : await fileToBase64(file);
-    let mimeType = 'image/jpeg';
-
-    // --- LLAMADA A OPENAI ---
+    
+    // PROMPT: Pedimos explícitamente los nombres que suelen fallar
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -53,30 +60,19 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
             content: [
               { 
                 type: "text", 
-                text: `
-                  Eres un auditor contable. Analiza esta factura/ticket.
-                  Extrae los datos exactos. Si hay desglose de IVA, úsalo.
-                  
-                  Devuelve JSON:
+                text: `Analiza esta factura. Extrae datos JSON estrictos:
                   {
                     "tipo": "Factura",
                     "fecha": "DD/MM/YYYY",
-                    "proveedor": "Nombre de la empresa (Busca arriba a la izquierda o en el logo)",
-                    "concepto": "Resumen breve del servicio (Ej: Mecanizado de ejes)",
-                    "base": 0.00 (Busca donde diga SUBTOTAL o BASE IMPONIBLE),
-                    "impuestos_porcentaje": 0 (Busca donde diga IVA X%),
-                    "impuestos_total": 0.00 (El importe del dinero del IVA),
-                    "total": 0.00 (El importe final TOTAL),
-                    "items": ["Lista de conceptos"]
-                  }
-                  
-                  Pistas para esta factura:
-                  - Proveedor suele ser "METAL MECANICA..." o similar.
-                  - Base es el "SUBTOTAL".
-                  - Impuestos % es el número del "IVA" (ej: 21).
-                ` 
+                    "proveedor": "Nombre completo",
+                    "concepto": "Resumen del servicio",
+                    "base_imponible": 0.00 (Subtotal sin impuestos),
+                    "porcentaje_iva": 0 (Solo el número, ej: 21),
+                    "total": 0.00,
+                    "items": []
+                  }` 
               },
-              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } }
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
             ]
           }
         ],
@@ -89,39 +85,46 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     const data = await response.json();
     const json = JSON.parse(data.choices[0].message.content);
 
-    console.log("✅ JSON OpenAI:", json);
+    console.log("✅ JSON RAW:", json);
 
-    // --- MAPEO "ESCOPETA" (Devolvemos todo repetido para acertar el nombre) ---
+    // --- MAPEO MASIVO PARA ACERTAR EN EL FRONTEND ---
+    // Devolvemos la variable con TODOS los nombres posibles que puede tener en 'types.ts'
+    
+    const baseValue = parseNum(json.base_imponible);
+    const taxValue = parseNum(json.porcentaje_iva);
+    const totalValue = parseNum(json.total);
+
     return {
       documentType: json.tipo || 'Factura',
       type: json.tipo || 'Factura',
-      
       date: json.fecha || '',
-      
       supplier: json.proveedor || 'Desconocido',
-      
-      // Concepto: Probamos varios nombres comunes
       concept: json.concepto || 'Varios',
       description: json.concepto || 'Varios',
       
-      // Base Imponible: Probamos 'base', 'subtotal', 'taxBase'
-      base: parseNum(json.base),
-      subtotal: parseNum(json.base),
-      taxBase: parseNum(json.base),
+      // AQUI ESTÁ LA CLAVE: Probamos todos los nombres
+      base: baseValue,
+      subtotal: baseValue,
+      taxBase: baseValue,
+      netAmount: baseValue,
+
+      tax: taxValue,
+      tax_percent: taxValue,
+      vat: taxValue,
+      taxPercentage: taxValue,
+
+      total: totalValue,
+      amount: totalValue,
       
-      // Impuestos %: Probamos 'tax_percent', 'tax', 'vat'
-      tax_percent: parseNum(json.impuestos_porcentaje),
-      tax: parseNum(json.impuestos_porcentaje), // A veces 'tax' se usa para el %
-      vat: parseNum(json.impuestos_porcentaje),
-      
-      // Impuestos Total (€): Por si tu web espera el dinero y no el %
-      taxAmount: parseNum(json.impuestos_total),
-      
-      // Total final
-      total: parseNum(json.total),
-      amount: parseNum(json.total), // A veces se llama amount
-      
-      items: json.items || []
+      items: json.items || [],
+
+      // EXTRAS: A veces los datos van anidados en 'metadata'
+      metadata: {
+         base: baseValue,
+         subtotal: baseValue,
+         tax: taxValue,
+         taxPercentage: taxValue
+      }
     } as any;
 
   } catch (error: any) {
@@ -129,12 +132,3 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     throw error;
   }
 };
-
-// Función auxiliar para limpiar números (quita símbolos € y converte a float)
-function parseNum(val: any): number {
-  if (typeof val === 'number') return val;
-  if (!val) return 0;
-  // Limpia "3.300,00 €" a 3300.00
-  const clean = val.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
-  return parseFloat(clean) || 0;
-}
