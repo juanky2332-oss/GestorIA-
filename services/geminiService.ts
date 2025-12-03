@@ -1,8 +1,8 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { DocumentData } from "../types";
 
 // ✅ CORRECTO - Sin API key hardcodeada
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY || "" });
+const genAI = new GoogleGenerativeAI(import.meta.env.VITE_API_KEY || "");
 
 const fileToGenerativePart = async (file: File) => {
   const base64EncodedDataPromise = new Promise<string>((resolve) => {
@@ -27,50 +27,39 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
   try {
     const imagePart = await fileToGenerativePart(file);
     
-    const textPart = {
-      text: `Analiza este documento (imagen o PDF). 
-      Identifica el tipo de documento entre: TICKET, FACTURA, ALBARÁN o PRESUPUESTO.
-      
-      Extrae los siguientes datos financieros.
-      Si algún campo no es visible o legible, usa "N/A" o "0.00 €".`
-    };
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: {
-        parts: [textPart, imagePart]
-      },
-      config: {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: {
         responseMimeType: "application/json",
         responseSchema: {
-          type: Type.OBJECT,
+          type: SchemaType.OBJECT,
           properties: {
             document_type: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'Tipo de documento: "TICKET", "FACTURA", "ALBARÁN", "PRESUPUESTO" o "OTRO".'
             },
             supplier: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'Nombre del proveedor o empresa emisora.'
             },
             date: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'Fecha del documento (DD/MM/YYYY).'
             },
             concept: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'Un resumen breve (max 5 palabras) del concepto principal o descripción de los ítems.'
             },
             tax_base: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'La base imponible (importe antes de impuestos) con moneda.'
             },
             taxes: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'El total de impuestos (IVA, IRPF, etc.) con moneda. Si es 0, pon "0.00 €".'
             },
             total: { 
-              type: Type.STRING,
+              type: SchemaType.STRING,
               description: 'El importe total final con moneda.'
             },
           },
@@ -79,7 +68,15 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
       }
     });
 
-    const text = response.text;
+    const prompt = `Analiza este documento (imagen o PDF). 
+Identifica el tipo de documento entre: TICKET, FACTURA, ALBARÁN o PRESUPUESTO.
+
+Extrae los siguientes datos financieros.
+Si algún campo no es visible o legible, usa "N/A" o "0.00 €".`;
+
+    const result = await model.generateContent([prompt, imagePart]);
+    const response = await result.response;
+    const text = response.text();
     
     if (!text) {
       throw new Error("No text response from AI");
