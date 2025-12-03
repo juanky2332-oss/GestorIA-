@@ -6,7 +6,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.j
 
 const API_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 
-// --- CONVERSORES DE IMAGEN ---
+// --- FUNCIONES DE CONVERSIÓN ---
 const convertPdfToImage = async (file: File): Promise<string> => {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
@@ -16,7 +16,7 @@ const convertPdfToImage = async (file: File): Promise<string> => {
   const context = canvas.getContext('2d');
   canvas.height = viewport.height;
   canvas.width = viewport.width;
-  if (!context) throw new Error("Contexto canvas falló");
+  if (!context) throw new Error("Fallo canvas");
   await page.render({ canvasContext: context, viewport: viewport }).promise;
   return canvas.toDataURL('image/jpeg', 0.85).split(',')[1]; 
 };
@@ -30,22 +30,13 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-// Función para limpiar números
-function parseNum(val: any): number {
-  if (typeof val === 'number') return val;
-  if (!val) return 0;
-  const clean = val.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
-  return parseFloat(clean) || 0;
-}
-
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
-  if (!API_KEY) throw new Error("Falta API Key OpenAI");
+  if (!API_KEY) throw new Error("Falta API Key");
 
   try {
     console.log(`📄 Procesando: ${file.name}`);
-    let base64Data = file.type === 'application/pdf' ? await convertPdfToImage(file) : await fileToBase64(file);
+    const base64Data = file.type === 'application/pdf' ? await convertPdfToImage(file) : await fileToBase64(file);
     
-    // PROMPT: Pedimos explícitamente los nombres que suelen fallar
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -60,17 +51,17 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
             content: [
               { 
                 type: "text", 
-                text: `Analiza esta factura. Extrae datos JSON estrictos:
+                text: `Analiza este documento. Extrae JSON EXACTO:
                   {
-                    "tipo": "Factura",
-                    "fecha": "DD/MM/YYYY",
-                    "proveedor": "Nombre completo",
-                    "concepto": "Resumen del servicio",
-                    "base_imponible": 0.00 (Subtotal sin impuestos),
-                    "porcentaje_iva": 0 (Solo el número, ej: 21),
-                    "total": 0.00,
-                    "items": []
-                  }` 
+                    "document_type": "FACTURA",
+                    "date": "DD/MM/YYYY",
+                    "supplier": "Nombre Proveedor",
+                    "concept": "Concepto principal",
+                    "tax_base": 0.00 (Número, Base Imponible),
+                    "taxes": 0.00 (Número, Impuestos Totales),
+                    "total": 0.00 (Número, Total Final)
+                  }
+                  Si no encuentras algo, pon 0 o "".` 
               },
               { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
             ]
@@ -85,47 +76,41 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     const data = await response.json();
     const json = JSON.parse(data.choices[0].message.content);
 
-    console.log("✅ JSON RAW:", json);
+    console.log("✅ DATOS RAW:", json);
 
-    // --- MAPEO MASIVO PARA ACERTAR EN EL FRONTEND ---
-    // Devolvemos la variable con TODOS los nombres posibles que puede tener en 'types.ts'
-    
-    const baseValue = parseNum(json.base_imponible);
-    const taxValue = parseNum(json.porcentaje_iva);
-    const totalValue = parseNum(json.total);
+    // --- MAPEO "ESCOPETA" (Cubrimos todas las posibilidades) ---
+    const taxBaseStr = json.tax_base ? String(json.tax_base) : '0.00';
+    const taxesStr = json.taxes ? String(json.taxes) : '0.00';
+    const totalStr = json.total ? String(json.total) : '0.00';
 
     return {
-      documentType: json.tipo || 'Factura',
-      type: json.tipo || 'Factura',
-      date: json.fecha || '',
-      supplier: json.proveedor || 'Desconocido',
-      concept: json.concepto || 'Varios',
-      description: json.concepto || 'Varios',
+      // Campos estándar obligatorios
+      document_type: json.document_type || 'FACTURA',
+      date: json.date || '',
+      supplier: json.supplier || '',
+      concept: json.concept || '',
       
-      // AQUI ESTÁ LA CLAVE: Probamos todos los nombres
-      base: baseValue,
-      subtotal: baseValue,
-      taxBase: baseValue,
-      netAmount: baseValue,
+      // 1. NOMBRES OFICIALES (Según types.ts)
+      tax_base: taxBaseStr,
+      taxes: taxesStr,
+      total: totalStr,
 
-      tax: taxValue,
-      tax_percent: taxValue,
-      vat: taxValue,
-      taxPercentage: taxValue,
-
-      total: totalValue,
-      amount: totalValue,
+      // 2. NOMBRES ALTERNATIVOS (Por si el frontend usa otros)
+      base: taxBaseStr,
+      subtotal: taxBaseStr,
       
-      items: json.items || [],
+      tax: taxesStr,
+      vat: taxesStr,
+      
+      amount: totalStr,
 
-      // EXTRAS: A veces los datos van anidados en 'metadata'
-      metadata: {
-         base: baseValue,
-         subtotal: baseValue,
-         tax: taxValue,
-         taxPercentage: taxValue
-      }
-    } as any;
+      // 3. TIPOS NUMÉRICOS (Por si el frontend espera number en vez de string)
+      // A veces React explota si espera un número y recibe texto
+      baseNumeric: parseFloat(taxBaseStr),
+      taxNumeric: parseFloat(taxesStr),
+      totalNumeric: parseFloat(totalStr)
+
+    } as any; // 'as any' permite devolver campos extra sin que TypeScript se queje
 
   } catch (error: any) {
     console.error('❌ Error:', error);
