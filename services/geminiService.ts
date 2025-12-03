@@ -1,8 +1,6 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { DocumentData } from '../types';
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const genAI = new GoogleGenerativeAI(API_KEY || '');
 
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -17,57 +15,48 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
-// Función que intenta generar contenido con varios modelos
-async function generateWithFallback(base64Data: string, mimeType: string) {
-  // Lista de modelos a probar en orden
-  const modelsToTry = [
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-    'gemini-pro-vision', // El antiguo, por si acaso
-    'gemini-1.0-pro'
-  ];
-
-  const prompt = `Analiza este documento financiero. Devuelve JSON estricto: { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "Empresa", "total": 100.00, "conceptos": ["item1"] }`;
-  
-  let lastError;
-
-  for (const modelName of modelsToTry) {
-    try {
-      console.log(`🔄 Probando modelo: ${modelName}...`);
-      const model = genAI.getGenerativeModel({ model: modelName });
-      
-      const result = await model.generateContent([
-        prompt,
-        { inlineData: { mimeType: mimeType, data: base64Data } }
-      ]);
-      
-      console.log(`✅ ¡Éxito con el modelo ${modelName}!`);
-      return result; // Si funciona, devuelve el resultado y sale
-      
-    } catch (error: any) {
-      console.warn(`⚠️ Falló el modelo ${modelName}:`, error.message);
-      lastError = error;
-      // Continúa con el siguiente modelo...
-    }
-  }
-  
-  // Si llegamos aquí, fallaron todos
-  throw lastError;
-}
-
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
-  console.log(`📄 Procesando archivo: ${file.name}`);
   if (!API_KEY) throw new Error("Falta API Key");
 
   try {
     const base64Data = await fileToBase64(file);
-    
-    // Llamamos a nuestra función "todo terreno"
-    const result = await generateWithFallback(base64Data, file.type);
 
-    const response = await result.response;
-    const text = response.text();
+    // 1. URL MANUAL DE LA API (Usamos v1beta con gemini-1.5-flash, que es lo estándar)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+
+    // 2. CUERPO DE LA PETICIÓN MANUAL
+    const requestBody = {
+      contents: [{
+        parts: [
+          { text: `Analiza este documento financiero (factura/ticket). Devuelve JSON estricto: { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "Empresa", "total": 100.00, "conceptos": ["item1"] }` },
+          {
+            inline_data: {
+              mime_type: file.type,
+              data: base64Data
+            }
+          }
+        ]
+      }]
+    };
+
+    // 3. HACER FETCH DIRECTO
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Error API Google (${response.status}): ${errorData.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
     
+    // 4. EXTRAER RESPUESTA
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error("La IA no devolvió texto.");
+
     const cleanedText = text.replace(/``````/g, '').trim();
     const json = JSON.parse(cleanedText);
 
@@ -82,7 +71,7 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     } as any;
 
   } catch (error: any) {
-    console.error('❌ Error FINAL:', error);
-    throw new Error(`Error de IA: ${error.message}`);
+    console.error('❌ Error Manual:', error);
+    throw new Error(error.message);
   }
 };
