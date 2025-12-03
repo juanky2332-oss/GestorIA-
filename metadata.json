@@ -1,0 +1,7 @@
+{
+  "name": "GestorIA",
+  "description": "Herramienta corporativa para la digitalización y auditoría ultrarrápida de tickets y facturas.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
