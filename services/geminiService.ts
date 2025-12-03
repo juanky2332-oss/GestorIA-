@@ -1,19 +1,17 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { DocumentData } from '../types';
 
-// 1. LEER LA API KEY
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
-// Inicializar cliente
+// Inicializamos cliente
 const genAI = new GoogleGenerativeAI(API_KEY || '');
 
-// Función auxiliar para convertir archivo a base64
+// Función auxiliar base64
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      // Limpieza segura del base64
       const base64 = result.includes(',') ? result.split(',')[1] : result;
       resolve(base64);
     };
@@ -23,73 +21,58 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
-  // Verificación de seguridad
   if (!API_KEY) {
-    console.error("❌ Error: No se encontró la API Key en las variables de entorno.");
+    console.error("❌ NO API KEY FOUND");
     throw new Error("Falta la API Key de Gemini.");
   }
 
   console.log(`📄 Procesando archivo: ${file.name}`);
-
+  
   try {
     const base64Data = await fileToBase64(file);
 
-    // Usamos el modelo estándar 'gemini-1.5-flash'
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // --- ESTRATEGIA MULTI-MODELO ---
+    // Probamos modelos en orden. Si falla el flash, vamos al pro.
+    const modelosAProbar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+    
+    let respuestaTexto = '';
+    let modeloUsado = '';
 
-    const prompt = `
-      Analiza esta imagen de un documento financiero (factura o ticket).
-      Responde ÚNICAMENTE con un JSON válido con esta estructura:
-      {
-        "tipo": "Factura" o "Ticket",
-        "fecha": "DD/MM/YYYY",
-        "proveedor": "Nombre empresa",
-        "total": 0.00,
-        "conceptos": ["item 1", "item 2"]
+    for (const nombreModelo of modelosAProbar) {
+      try {
+        console.log(`🔄 Intentando con modelo: ${nombreModelo}...`);
+        const model = genAI.getGenerativeModel({ model: nombreModelo });
+        
+        const result = await model.generateContent([
+          `Analiza este documento financiero. Devuelve SOLO un JSON válido:
+           { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "x", "total": 0.00, "conceptos": [] }`,
+          { inlineData: { mimeType: file.type, data: base64Data } }
+        ]);
+        
+        const response = await result.response;
+        respuestaTexto = response.text();
+        modeloUsado = nombreModelo;
+        console.log(`✅ ¡Éxito con ${nombreModelo}!`);
+        break; // Si funciona, salimos del bucle
+      } catch (e) {
+        console.warn(`⚠️ Falló ${nombreModelo}, probando siguiente...`);
       }
-    `;
-
-    const result = await model.generateContent([
-      prompt,
-      {
-        inlineData: {
-          mimeType: file.type,
-          data: base64Data,
-        },
-      },
-    ]);
-
-    const response = await result.response;
-    const text = response.text();
-    console.log('✅ Respuesta Gemini:', text);
-
-    // --- LIMPIEZA SEGURA DE JSON (Método sin Regex complejas) ---
-    let cleanedText = text;
-    // 1. Si tiene ```
-    if (cleanedText.includes('```json')) {
-      cleanedText = cleanedText.split('```
-    } else if (cleanedText.includes('```')) {
-      cleanedText = cleanedText.split('```
     }
-    // 2. Si quedó algún ``` al final, lo quitamos
-    if (cleanedText.includes('```
-      cleanedText = cleanedText.split('```')[0];
-    }
+
+    if (!respuestaTexto) throw new Error("Todos los modelos fallaron o no devolvieron texto.");
+
+    // Limpieza de JSON (sin regex peligrosas)
+    let cleanedText = respuestaTexto;
+    if (cleanedText.includes('``````json')[1];
+    if (cleanedText.includes('``````')[0];
     cleanedText = cleanedText.trim();
-    // -----------------------------------------------------------
 
-    let json;
-    try {
-      json = JSON.parse(cleanedText);
-    } catch (e) {
-      console.error("Error parseando JSON:", cleanedText);
-      throw new Error("La IA no devolvió un JSON válido.");
-    }
+    const json = JSON.parse(cleanedText);
 
     return {
       documentType: json.tipo || 'Desconocido',
-      document_type: json.tipo || 'Desconocido', // Compatibilidad
-      type: json.tipo || 'Desconocido',          // Compatibilidad
+      document_type: json.tipo || 'Desconocido',
+      type: json.tipo || 'Desconocido',
       date: json.fecha || '',
       supplier: json.proveedor || 'No identificado',
       total: typeof json.total === 'number' ? json.total : parseFloat(json.total) || 0,
@@ -97,7 +80,7 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     } as any;
 
   } catch (error: any) {
-    console.error('❌ Error en analyzeDocument:', error);
-    throw error;
+    console.error('❌ Error Fatal:', error);
+    throw new Error(`Error procesando documento: ${error.message}`);
   }
 };
