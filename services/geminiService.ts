@@ -1,8 +1,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DocumentData } from "../types";
 
-// ✅ LÍNEA CORREGIDA PARA VITE
-const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY || "AIzaSyBfvevq0hRmuCAZimNFWUz85ilZ8zKeVhw" });
+// ✅ CORRECTO - Sin API key hardcodeada
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY || "" });
 
 const fileToGenerativePart = async (file: File) => {
   const base64EncodedDataPromise = new Promise<string>((resolve) => {
