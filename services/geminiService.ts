@@ -18,11 +18,14 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
 
   try {
     const base64Data = await fileToBase64(file);
-    // Usamos el modelo más potente para evitar errores
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+    
+    // ✅ CAMBIO CLAVE: Usamos el alias genérico 'gemini-flash-latest'
+    // Esto asegura que siempre use la última versión activa (ahora mismo la 2.5)
+    // y no falle si Google retira la anterior.
+    const model = genAI.getGenerativeModel({ model: 'gemini-flash-latest' });
 
     const result = await model.generateContent([
-      `Analiza este documento. Devuelve SOLO JSON válido: 
+      `Analiza este documento financiero. Devuelve SOLO JSON válido: 
       { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "x", "total": 0, "conceptos": [] }`,
       { inlineData: { mimeType: file.type, data: base64Data } }
     ]);
@@ -30,14 +33,8 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     const response = await result.response;
     let text = response.text();
 
-    // --- LIMPIEZA A PRUEBA DE BOMBAS (Sin IFs raros) ---
-    // 1. Quitamos la palabra json si existe
-    text = text.replace(/json/gi, '');
-    // 2. Quitamos TODAS las tildes triples (```
-    text = text.replace(/```/g, '');
-    // 3. Limpiamos espacios
-    text = text.trim();
-    // ---------------------------------------------------
+    // Limpieza simple y efectiva
+    text = text.replace(/json/gi, '').replace(/```
 
     const json = JSON.parse(text);
 
@@ -52,7 +49,11 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     } as any;
 
   } catch (error: any) {
-    console.error('Error:', error);
-    throw new Error("Error analizando el documento: " + error.message);
+    console.error('Error IA:', error);
+    // Si falla, intentamos con el modelo específico 2.5 como respaldo manual
+    if (error.message.includes('404')) {
+       throw new Error("El modelo de IA antiguo ha caducado. Intenta actualizar la librería o usar 'gemini-2.5-flash'.");
+    }
+    throw error;
   }
 };
