@@ -14,7 +14,9 @@ const fileToBase64 = (file: File): Promise<string> => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string;
-      const base64 = result.split(',')[1];
+      // Algunos navegadores devuelven "data:image/jpeg;base64,..." y otros no
+      // Nos aseguramos de coger solo la parte base64
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
       resolve(base64);
     };
     reader.onerror = reject;
@@ -35,8 +37,9 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     // 2. PREPARAR DATOS
     const base64Data = await fileToBase64(file);
     
-    // Usamos modelo flash para mayor velocidad
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    // ✅ CAMBIO IMPORTANTE: Usamos 'gemini-1.5-flash-latest' para evitar el error 404
+    // Si este falla, la alternativa segura es 'gemini-pro-vision' (para imágenes)
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash-latest' });
 
     const prompt = `
       Analiza este documento financiero (factura, ticket o albarán).
@@ -67,14 +70,23 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     console.log('✅ Respuesta Gemini:', text);
 
     // 4. LIMPIEZA Y PARSEO
-    // Quitamos `````` por si la IA los incluye
-    const cleanedText = text.replace(/``````/g, '').trim();
-    const json = JSON.parse(cleanedText);
+    // Limpiamos cualquier bloque de código markdown que la IA pueda haber puesto
+    const cleanedText = text
+      .replace(/```
+      .replace(/```/g, '')
+      .trim();
+      
+    let json;
+    try {
+        json = JSON.parse(cleanedText);
+    } catch (e) {
+        console.error("Error parseando JSON:", cleanedText);
+        throw new Error("La respuesta de la IA no fue un JSON válido");
+    }
 
     // 5. MAPEO DE DATOS (Con 'as any' para arreglar tu error de build)
-    // Ponemos múltiples variantes de nombres para asegurar compatibilidad con tu types.ts
     const data = {
-      // Variantes de tipo
+      // Variantes de tipo para que coincida con tu types.ts sea cual sea
       documentType: json.tipo || 'Desconocido',
       document_type: json.tipo || 'Desconocido',
       type: json.tipo || 'Desconocido',
