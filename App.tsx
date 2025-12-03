@@ -3,6 +3,7 @@ import { UploadArea } from './components/UploadArea';
 import { ResultCard } from './components/ResultCard';
 import { BatchSummary } from './components/BatchSummary';
 import { analyzeDocument } from './services/geminiService';
+import { sendToN8N } from './services/n8nService'; // <--- IMPORTANTE: Importamos el servicio n8n
 import { DocumentData, AppStatus, BatchItem } from './types';
 import { AlertTriangle, Loader2, CheckCircle2, FileText } from 'lucide-react';
 
@@ -48,7 +49,6 @@ export default function App() {
         setStatus('review_single');
       } catch (error: any) {
         console.error("❌ Error detallado:", error);
-        // Mostramos el mensaje real del error (si existe), o uno por defecto
         const mensajeReal = error?.message || JSON.stringify(error) || "Error desconocido al procesar.";
         setErrorMsg(`Error: ${mensajeReal}`);
         setStatus('error');
@@ -86,7 +86,6 @@ export default function App() {
         setBatchItems(prev => [...prev, ...newItems]);
         setStatus('review_batch');
       } else {
-        // Si fallan todos, mostramos el error del último
         setErrorMsg(`Error al procesar el lote: ${lastError}`);
         setStatus('error');
       }
@@ -102,32 +101,52 @@ export default function App() {
     setIsSending(false);
   };
 
+  // --- CONFIRMACIÓN UN DOCUMENTO (ENVÍO A N8N) ---
   const handleConfirmSingle = async () => {
     if (!singleData) return;
     setIsSending(true);
-    // Simulation of API call
-    setTimeout(() => {
+    
+    try {
+      // Enviamos los datos al Webhook
+      await sendToN8N(singleData);
+      
       setIsSending(false);
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-    }, 1500);
+      
+    } catch (error) {
+      console.error("Fallo al enviar a n8n", error);
+      setIsSending(false);
+      setErrorMsg("Error al guardar en el servidor. Inténtalo de nuevo.");
+      // No reseteamos para que el usuario pueda reintentar
+    }
   };
 
+  // --- CONFIRMACIÓN LOTE (ENVÍO MÚLTIPLE A N8N) ---
   const handleConfirmBatch = async () => {
     if (batchItems.length === 0) return;
     setIsSending(true);
-    // Simulation of API call
-    setTimeout(() => {
+
+    try {
+      // Enviamos todos los documentos uno por uno
+      // Usamos Promise.all para enviarlos en paralelo (más rápido)
+      await Promise.all(batchItems.map(item => sendToN8N(item.data)));
+
       setIsSending(false);
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-    }, 2000);
+
+    } catch (error) {
+      console.error("Fallo al enviar lote a n8n", error);
+      setIsSending(false);
+      setErrorMsg("Error al guardar algunos documentos.");
+    }
   };
 
   const handleRemoveBatchItem = (id: string) => {
