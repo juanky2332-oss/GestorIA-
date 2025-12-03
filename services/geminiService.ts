@@ -2,7 +2,7 @@ import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { DocumentData } from "../types";
 
 // ✅ CORRECTO - Sin API key hardcodeada
-const genAI = new GoogleGenerativeAI(import.meta.env.VITE_API_KEY || "");
+const genAI = new GoogleGenerativeAI(import.meta.env?.VITE_API_KEY || "");
 
 const fileToGenerativePart = async (file: File) => {
   const base64EncodedDataPromise = new Promise<string>((resolve) => {
