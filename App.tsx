@@ -46,9 +46,11 @@ export default function App() {
         const result = await analyzeDocument(file);
         setSingleData(result);
         setStatus('review_single');
-      } catch (error) {
-        console.error(error);
-        setErrorMsg("No se pudo leer el documento. Intenta con mejor iluminación o verifica el formato.");
+      } catch (error: any) {
+        console.error("❌ Error detallado:", error);
+        // Mostramos el mensaje real del error (si existe), o uno por defecto
+        const mensajeReal = error?.message || JSON.stringify(error) || "Error desconocido al procesar.";
+        setErrorMsg(`Error: ${mensajeReal}`);
         setStatus('error');
       }
     } else {
@@ -58,6 +60,7 @@ export default function App() {
       
       const newItems: BatchItem[] = [];
       let successCount = 0;
+      let lastError = "";
 
       for (let i = 0; i < files.length; i++) {
         setProcessingProgress({ current: i + 1, total: files.length });
@@ -73,8 +76,9 @@ export default function App() {
             data: result
           });
           successCount++;
-        } catch (error) {
+        } catch (error: any) {
           console.error(`Error processing file ${file.name}`, error);
+          lastError = error?.message || "Error desconocido";
         }
       }
 
@@ -82,7 +86,8 @@ export default function App() {
         setBatchItems(prev => [...prev, ...newItems]);
         setStatus('review_batch');
       } else {
-        setErrorMsg("Error al procesar el lote. Intenta con menos archivos.");
+        // Si fallan todos, mostramos el error del último
+        setErrorMsg(`Error al procesar el lote: ${lastError}`);
         setStatus('error');
       }
     }
@@ -97,93 +102,32 @@ export default function App() {
     setIsSending(false);
   };
 
-  // ✅ MODIFICADO: Conexión real con n8n
   const handleConfirmSingle = async () => {
     if (!singleData) return;
     setIsSending(true);
-    
-    try {
-      // Webhook de n8n - reemplaza con tu URL real
-      const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://tu-instancia.n8n.cloud/webhook/gestoria-docs';
-      
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...singleData,
-          timestamp: new Date().toISOString(),
-          source: 'gestoria-app',
-          mode: 'single'
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
-      }
-      
+    // Simulation of API call
+    setTimeout(() => {
+      setIsSending(false);
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-      
-    } catch (error) {
-      console.error('Error al enviar a n8n:', error);
-      setErrorMsg('Error al conectar con el sistema. Verifica tu conexión.');
-      setStatus('error');
-    } finally {
-      setIsSending(false);
-    }
+    }, 1500);
   };
 
-  // ✅ MODIFICADO: Envío por lotes a n8n
   const handleConfirmBatch = async () => {
     if (batchItems.length === 0) return;
     setIsSending(true);
-    
-    try {
-      const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://tu-instancia.n8n.cloud/webhook/gestoria-docs';
-      
-      const batchData = batchItems.map(item => ({
-        ...item.data,
-        fileName: item.file.name,
-        fileSize: item.file.size,
-        fileType: item.file.type
-      }));
-      
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          documents: batchData,
-          timestamp: new Date().toISOString(),
-          source: 'gestoria-app',
-          mode: 'batch',
-          totalDocuments: batchItems.length
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
-      }
-      
+    // Simulation of API call
+    setTimeout(() => {
+      setIsSending(false);
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-      
-    } catch (error) {
-      console.error('Error al enviar lote a n8n:', error);
-      setErrorMsg('Error al procesar el lote. Verifica tu conexión.');
-      setStatus('error');
-    } finally {
-      setIsSending(false);
-    }
+    }, 2000);
   };
 
   const handleRemoveBatchItem = (id: string) => {
@@ -194,10 +138,9 @@ export default function App() {
   };
 
   return (
-    // ✅ MODIFICADO: h-screen en lugar de min-h-screen + overflow-hidden
     <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-500/30 overflow-hidden relative">
       
-      {/* ✅ MODIFICADO: Background Ambience - absolute en lugar de fixed */}
+      {/* Background Ambience */}
       <div className="absolute inset-0 pointer-events-none z-0">
         <div className="absolute -top-[20%] -left-[10%] w-[70%] h-[70%] bg-blue-900/10 rounded-full blur-[120px]" />
         <div className="absolute top-[40%] -right-[10%] w-[60%] h-[60%] bg-indigo-900/10 rounded-full blur-[120px]" />
@@ -217,7 +160,7 @@ export default function App() {
         </p>
       </header>
 
-      {/* ✅ MODIFICADO: Main con overflow-y-auto para scroll interno */}
+      {/* Main Content Area */}
       <main className="flex-1 flex flex-col items-center justify-start p-4 md:p-6 w-full relative z-10 max-w-7xl mx-auto overflow-y-auto">
         
         {/* State: IDLE */}
@@ -291,7 +234,9 @@ export default function App() {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-white mb-2">Error de Lectura</h3>
-                <p className="text-slate-400 leading-relaxed">{errorMsg}</p>
+                <p className="text-slate-400 leading-relaxed break-words text-sm">
+                  {errorMsg}
+                </p>
               </div>
               <button 
                 onClick={handleReset}
