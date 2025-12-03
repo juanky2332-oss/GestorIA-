@@ -1,92 +1,58 @@
-import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
-import { DocumentData } from "../types";
+import { GoogleGenerativeAI } from '@google/generative-ai';
+import type { DocumentData } from '../types';
 
-// ✅ CORRECTO - Sin API key hardcodeada
-const genAI = new GoogleGenerativeAI(import.meta.env?.VITE_API_KEY || "");
+// AQUÍ ES DONDE EL CÓDIGO BUSCA LA LLAVE QUE PUSISTE EN VERCEL
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
-const fileToGenerativePart = async (file: File) => {
-  const base64EncodedDataPromise = new Promise<string>((resolve) => {
+const genAI = new GoogleGenerativeAI(API_KEY || '');
+
+// Función auxiliar para convertir imagen a texto (base64)
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onloadend = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result.split(',')[1]);
-      }
-    };
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.onerror = reject;
     reader.readAsDataURL(file);
   });
-
-  return {
-    inlineData: {
-      data: await base64EncodedDataPromise,
-      mimeType: file.type,
-    },
-  };
 };
 
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
+  // Si no hay llave, avisa del error
+  if (!API_KEY) {
+    console.error("❌ ERROR CRÍTICO: No encuentro la API Key. Revisa el PASO 2 en Vercel.");
+    throw new Error("Falta la API Key");
+  }
+
   try {
-    const imagePart = await fileToGenerativePart(file);
+    // 1. Preparar imagen
+    const base64 = await fileToBase64(file);
     
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: SchemaType.OBJECT,
-          properties: {
-            document_type: { 
-              type: SchemaType.STRING,
-              description: 'Tipo de documento: "TICKET", "FACTURA", "ALBARÁN", "PRESUPUESTO" o "OTRO".'
-            },
-            supplier: { 
-              type: SchemaType.STRING,
-              description: 'Nombre del proveedor o empresa emisora.'
-            },
-            date: { 
-              type: SchemaType.STRING,
-              description: 'Fecha del documento (DD/MM/YYYY).'
-            },
-            concept: { 
-              type: SchemaType.STRING,
-              description: 'Un resumen breve (max 5 palabras) del concepto principal o descripción de los ítems.'
-            },
-            tax_base: { 
-              type: SchemaType.STRING,
-              description: 'La base imponible (importe antes de impuestos) con moneda.'
-            },
-            taxes: { 
-              type: SchemaType.STRING,
-              description: 'El total de impuestos (IVA, IRPF, etc.) con moneda. Si es 0, pon "0.00 €".'
-            },
-            total: { 
-              type: SchemaType.STRING,
-              description: 'El importe total final con moneda.'
-            },
-          },
-          required: ["document_type", "supplier", "date", "concept", "tax_base", "taxes", "total"],
-        }
+    // 2. Preparar modelo (usamos flash que es rápido)
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    // 3. Pedir datos
+    const result = await model.generateContent([
+      `Analiza este documento financiero. Devuelve un JSON exacto con estos campos:
+       { "tipo": "Factura/Ticket", "fecha": "DD/MM/AAAA", "proveedor": "Nombre", "total": 0.00, "conceptos": ["item1", "item2"] }`,
+      {
+        inlineData: { mimeType: file.type, data: base64 }
       }
-    });
+    ]);
 
-    const prompt = `Analiza este documento (imagen o PDF). 
-Identifica el tipo de documento entre: TICKET, FACTURA, ALBARÁN o PRESUPUESTO.
+    // 4. Limpiar resultado
+    const text = result.response.text().replace(/``````/g, '').trim();
+    const json = JSON.parse(text);
 
-Extrae los siguientes datos financieros.
-Si algún campo no es visible o legible, usa "N/A" o "0.00 €".`;
-
-    const result = await model.generateContent([prompt, imagePart]);
-    const response = await result.response;
-    const text = response.text();
-    
-    if (!text) {
-      throw new Error("No text response from AI");
-    }
-
-    const data = JSON.parse(text) as DocumentData;
-    return data;
+    return {
+      documentType: json.tipo || 'Desconocido',
+      date: json.fecha || '',
+      supplier: json.proveedor || '',
+      total: json.total || 0,
+      items: json.conceptos || []
+    };
 
   } catch (error) {
-    console.error("Error analyzing document:", error);
+    console.error("❌ Error leyendo el archivo:", error);
     throw error;
   }
 };
