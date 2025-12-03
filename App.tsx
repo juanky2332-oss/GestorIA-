@@ -97,32 +97,93 @@ export default function App() {
     setIsSending(false);
   };
 
+  // ✅ MODIFICADO: Conexión real con n8n
   const handleConfirmSingle = async () => {
     if (!singleData) return;
     setIsSending(true);
-    // Simulation of API call
-    setTimeout(() => {
-      setIsSending(false);
+    
+    try {
+      // Webhook de n8n - reemplaza con tu URL real
+      const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://tu-instancia.n8n.cloud/webhook/gestoria-docs';
+      
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...singleData,
+          timestamp: new Date().toISOString(),
+          source: 'gestoria-app',
+          mode: 'single'
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Error HTTP: ${response.status}`);
+      }
+      
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-    }, 1500);
+      
+    } catch (error) {
+      console.error('Error al enviar a n8n:', error);
+      setErrorMsg('Error al conectar con el sistema. Verifica tu conexión.');
+      setStatus('error');
+    } finally {
+      setIsSending(false);
+    }
   };
 
+  // ✅ MODIFICADO: Envío por lotes a n8n
   const handleConfirmBatch = async () => {
     if (batchItems.length === 0) return;
     setIsSending(true);
-    // Simulation of API call
-    setTimeout(() => {
-      setIsSending(false);
+    
+    try {
+      const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL || 'https://tu-instancia.n8n.cloud/webhook/gestoria-docs';
+      
+      const batchData = batchItems.map(item => ({
+        ...item.data,
+        fileName: item.file.name,
+        fileSize: item.file.size,
+        fileType: item.file.type
+      }));
+      
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documents: batchData,
+          timestamp: new Date().toISOString(),
+          source: 'gestoria-app',
+          mode: 'batch',
+          totalDocuments: batchItems.length
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Error HTTP: ${response.status}`);
+      }
+      
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-    }, 2000);
+      
+    } catch (error) {
+      console.error('Error al enviar lote a n8n:', error);
+      setErrorMsg('Error al procesar el lote. Verifica tu conexión.');
+      setStatus('error');
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleRemoveBatchItem = (id: string) => {
@@ -133,16 +194,17 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-500/30 overflow-x-hidden relative">
+    // ✅ MODIFICADO: h-screen en lugar de min-h-screen + overflow-hidden
+    <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-500/30 overflow-hidden relative">
       
-      {/* Background Ambience - Fixed positioning to ensure it's always visible */}
-      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+      {/* ✅ MODIFICADO: Background Ambience - absolute en lugar de fixed */}
+      <div className="absolute inset-0 pointer-events-none z-0">
         <div className="absolute -top-[20%] -left-[10%] w-[70%] h-[70%] bg-blue-900/10 rounded-full blur-[120px]" />
         <div className="absolute top-[40%] -right-[10%] w-[60%] h-[60%] bg-indigo-900/10 rounded-full blur-[120px]" />
       </div>
 
       {/* Header */}
-      <header className="pt-8 pb-6 px-6 text-center z-10 relative">
+      <header className="pt-8 pb-6 px-6 text-center z-10 relative flex-shrink-0">
         <div className="inline-flex items-center gap-2 mb-3 px-3 py-1 rounded-full bg-slate-900/80 border border-slate-800 text-xs font-medium text-slate-400 backdrop-blur-md">
           <FileText size={12} className="text-blue-500" />
           <span>Auditoría v2.0</span>
@@ -155,8 +217,8 @@ export default function App() {
         </p>
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col items-center justify-start p-4 md:p-6 w-full relative z-10 max-w-7xl mx-auto">
+      {/* ✅ MODIFICADO: Main con overflow-y-auto para scroll interno */}
+      <main className="flex-1 flex flex-col items-center justify-start p-4 md:p-6 w-full relative z-10 max-w-7xl mx-auto overflow-y-auto">
         
         {/* State: IDLE */}
         {status === 'idle' && !showSuccessToast && (
@@ -260,7 +322,7 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="py-6 text-center text-slate-700 text-xs z-10 relative">
+      <footer className="py-6 text-center text-slate-700 text-xs z-10 relative flex-shrink-0">
         <p>&copy; 2024 GestorIA Enterprise Solutions</p>
       </footer>
     </div>
