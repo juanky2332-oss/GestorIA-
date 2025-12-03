@@ -2,72 +2,44 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { DocumentData } from '../types';
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-
-// Inicializamos cliente
 const genAI = new GoogleGenerativeAI(API_KEY || '');
 
-// Función auxiliar base64
 const fileToBase64 = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.includes(',') ? result.split(',')[1] : result;
-      resolve(base64);
-    };
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 };
 
 export const analyzeDocument = async (file: File): Promise<DocumentData> => {
-  if (!API_KEY) {
-    console.error("❌ NO API KEY FOUND");
-    throw new Error("Falta la API Key de Gemini.");
-  }
+  if (!API_KEY) throw new Error("Falta API Key");
 
-  console.log(`📄 Procesando archivo: ${file.name}`);
-  
   try {
     const base64Data = await fileToBase64(file);
+    // Usamos el modelo más potente para evitar errores
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
-    // --- ESTRATEGIA MULTI-MODELO ---
-    // Probamos modelos en orden. Si falla el flash, vamos al pro.
-    const modelosAProbar = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
-    
-    let respuestaTexto = '';
-    let modeloUsado = '';
+    const result = await model.generateContent([
+      `Analiza este documento. Devuelve SOLO JSON válido: 
+      { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "x", "total": 0, "conceptos": [] }`,
+      { inlineData: { mimeType: file.type, data: base64Data } }
+    ]);
 
-    for (const nombreModelo of modelosAProbar) {
-      try {
-        console.log(`🔄 Intentando con modelo: ${nombreModelo}...`);
-        const model = genAI.getGenerativeModel({ model: nombreModelo });
-        
-        const result = await model.generateContent([
-          `Analiza este documento financiero. Devuelve SOLO un JSON válido:
-           { "tipo": "Factura", "fecha": "DD/MM/YYYY", "proveedor": "x", "total": 0.00, "conceptos": [] }`,
-          { inlineData: { mimeType: file.type, data: base64Data } }
-        ]);
-        
-        const response = await result.response;
-        respuestaTexto = response.text();
-        modeloUsado = nombreModelo;
-        console.log(`✅ ¡Éxito con ${nombreModelo}!`);
-        break; // Si funciona, salimos del bucle
-      } catch (e) {
-        console.warn(`⚠️ Falló ${nombreModelo}, probando siguiente...`);
-      }
-    }
+    const response = await result.response;
+    let text = response.text();
 
-    if (!respuestaTexto) throw new Error("Todos los modelos fallaron o no devolvieron texto.");
+    // --- LIMPIEZA A PRUEBA DE BOMBAS (Sin IFs raros) ---
+    // 1. Quitamos la palabra json si existe
+    text = text.replace(/json/gi, '');
+    // 2. Quitamos TODAS las tildes triples (```
+    text = text.replace(/```/g, '');
+    // 3. Limpiamos espacios
+    text = text.trim();
+    // ---------------------------------------------------
 
-    // Limpieza de JSON (sin regex peligrosas)
-    let cleanedText = respuestaTexto;
-    if (cleanedText.includes('``````json')[1];
-    if (cleanedText.includes('``````')[0];
-    cleanedText = cleanedText.trim();
-
-    const json = JSON.parse(cleanedText);
+    const json = JSON.parse(text);
 
     return {
       documentType: json.tipo || 'Desconocido',
@@ -80,7 +52,7 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     } as any;
 
   } catch (error: any) {
-    console.error('❌ Error Fatal:', error);
-    throw new Error(`Error procesando documento: ${error.message}`);
+    console.error('Error:', error);
+    throw new Error("Error analizando el documento: " + error.message);
   }
 };
