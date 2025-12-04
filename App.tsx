@@ -3,7 +3,7 @@ import { UploadArea } from './components/UploadArea';
 import { ResultCard } from './components/ResultCard';
 import { BatchSummary } from './components/BatchSummary';
 import { analyzeDocument } from './services/geminiService';
-import { sendToN8N } from './services/n8nService'; // <--- IMPORTANTE: Importamos el servicio n8n
+import { sendToN8N } from './services/n8nService';
 import { DocumentData, AppStatus, BatchItem } from './types';
 import { AlertTriangle, Loader2, CheckCircle2, FileText } from 'lucide-react';
 
@@ -101,39 +101,38 @@ export default function App() {
     setIsSending(false);
   };
 
-  // --- CONFIRMACIÓN UN DOCUMENTO (ENVÍO A N8N) ---
+  // --- CONFIRMACIÓN UN DOCUMENTO ---
   const handleConfirmSingle = async () => {
     if (!singleData) return;
     setIsSending(true);
     
     try {
-      // Enviamos los datos al Webhook
       await sendToN8N(singleData);
-      
       setIsSending(false);
       setShowSuccessToast(true);
       setTimeout(() => {
         setShowSuccessToast(false);
         handleReset();
       }, 2000);
-      
     } catch (error) {
       console.error("Fallo al enviar a n8n", error);
       setIsSending(false);
-      setErrorMsg("Error al guardar en el servidor. Inténtalo de nuevo.");
-      // No reseteamos para que el usuario pueda reintentar
+      setErrorMsg("Error al guardar en el servidor.");
     }
   };
 
-  // --- CONFIRMACIÓN LOTE (ENVÍO MÚLTIPLE A N8N) ---
+  // --- CONFIRMACIÓN LOTE (MODIFICADO: SECUENCIAL CON PAUSA) ---
   const handleConfirmBatch = async () => {
     if (batchItems.length === 0) return;
     setIsSending(true);
 
     try {
-      // Enviamos todos los documentos uno por uno
-      // Usamos Promise.all para enviarlos en paralelo (más rápido)
-      await Promise.all(batchItems.map(item => sendToN8N(item.data)));
+      // Enviamos uno a uno con pausa para no saturar Google Sheets
+      for (const item of batchItems) {
+        await sendToN8N(item.data);
+        // ⏳ Pausa de 2 segundos entre envíos (CRÍTICO PARA QUE FUNCIONE BIEN)
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
 
       setIsSending(false);
       setShowSuccessToast(true);
