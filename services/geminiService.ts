@@ -51,17 +51,31 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
             content: [
               { 
                 type: "text", 
-                text: `Analiza este documento. Extrae JSON EXACTO:
+                text: `Analiza este documento financiero con precisión de auditor.
+                  
+                  1. TIPO DE DOCUMENTO (Detecta con cuidado):
+                     - "TICKET": Si es recibo térmico, estrecho o dice "Factura Simplificada".
+                     - "ALBARÁN": Si dice "Nota de entrega", "Albarán" o "Entrega".
+                     - "PRESUPUESTO": Si dice "Presupuesto", "Proforma" o "Cotización".
+                     - "FACTURA": Solo si dice explícitamente "Factura" y tiene datos fiscales completos.
+                  
+                  2. EXTRAE EL NÚMERO DE DOCUMENTO:
+                     - Busca "Nº Factura", "Ticket #", "Serie/Nº", "Ref:", "Factura:", "Albarán:", "Presupuesto Nº".
+                  
+                  Devuelve JSON EXACTO:
                   {
-                    "document_type": "FACTURA",
+                    "document_type": "FACTURA" | "TICKET" | "ALBARÁN" | "PRESUPUESTO",
+                    "document_number": "String (El número identificador, ej: F24-999)",
                     "date": "DD/MM/YYYY",
                     "supplier": "Nombre Proveedor",
-                    "concept": "Concepto principal",
+                    "concept": "Concepto principal (Resumen)",
                     "tax_base": 0.00 (Número, Base Imponible),
                     "taxes": 0.00 (Número, Impuestos Totales),
                     "total": 0.00 (Número, Total Final)
                   }
-                  Si no encuentras algo, pon 0 o "".` 
+                  
+                  - Si un valor numérico no existe, pon 0.
+                  - Si es texto y no existe, pon "".` 
               },
               { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
             ]
@@ -76,41 +90,39 @@ export const analyzeDocument = async (file: File): Promise<DocumentData> => {
     const data = await response.json();
     const json = JSON.parse(data.choices[0].message.content);
 
-    console.log("✅ DATOS RAW:", json);
+    console.log("✅ DATOS IA:", json);
 
-    // --- MAPEO "ESCOPETA" (Cubrimos todas las posibilidades) ---
+    // --- MAPEO FINAL "ESCOPETA" (A prueba de fallos) ---
     const taxBaseStr = json.tax_base ? String(json.tax_base) : '0.00';
     const taxesStr = json.taxes ? String(json.taxes) : '0.00';
     const totalStr = json.total ? String(json.total) : '0.00';
 
     return {
-      // Campos estándar obligatorios
-      document_type: json.document_type || 'FACTURA',
+      // CAMPOS PRINCIPALES
+      document_type: (json.document_type as any) || 'FACTURA',
+      document_number: json.document_number || '', // <--- CAMPO NUEVO MAPEADO
       date: json.date || '',
       supplier: json.supplier || '',
       concept: json.concept || '',
       
-      // 1. NOMBRES OFICIALES (Según types.ts)
+      // NOMBRES OFICIALES (Texto)
       tax_base: taxBaseStr,
       taxes: taxesStr,
       total: totalStr,
 
-      // 2. NOMBRES ALTERNATIVOS (Por si el frontend usa otros)
+      // ALIAS (Por si acaso el frontend usa otros nombres)
       base: taxBaseStr,
       subtotal: taxBaseStr,
-      
       tax: taxesStr,
       vat: taxesStr,
-      
       amount: totalStr,
 
-      // 3. TIPOS NUMÉRICOS (Por si el frontend espera number en vez de string)
-      // A veces React explota si espera un número y recibe texto
-      baseNumeric: parseFloat(taxBaseStr),
-      taxNumeric: parseFloat(taxesStr),
-      totalNumeric: parseFloat(totalStr)
+      // VALORES NUMÉRICOS (Para n8n y cálculos)
+      baseNumeric: parseFloat(taxBaseStr) || 0,
+      taxNumeric: parseFloat(taxesStr) || 0,
+      totalNumeric: parseFloat(totalStr) || 0
 
-    } as any; // 'as any' permite devolver campos extra sin que TypeScript se queje
+    } as any;
 
   } catch (error: any) {
     console.error('❌ Error:', error);
