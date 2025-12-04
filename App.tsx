@@ -12,6 +12,7 @@ export default function App() {
   
   // Single mode state
   const [singleData, setSingleData] = useState<DocumentData | null>(null);
+  const [currentSingleFile, setCurrentSingleFile] = useState<File | null>(null); // <--- NUEVO: Guardamos el archivo
   const [singleFilePreview, setSingleFilePreview] = useState<{ url: string, type: string } | null>(null);
 
   // Batch mode state
@@ -22,7 +23,6 @@ export default function App() {
   const [isSending, setIsSending] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
 
-  // Cleanup object URLs
   useEffect(() => {
     return () => {
       if (singleFilePreview) URL.revokeObjectURL(singleFilePreview.url);
@@ -39,6 +39,7 @@ export default function App() {
     if (!isBatch) {
       // SINGLE MODE
       const file = files[0];
+      setCurrentSingleFile(file); // Guardamos el archivo físico
       setStatus('analyzing');
       const url = URL.createObjectURL(file);
       setSingleFilePreview({ url, type: file.type });
@@ -49,7 +50,7 @@ export default function App() {
         setStatus('review_single');
       } catch (error: any) {
         console.error("❌ Error detallado:", error);
-        const mensajeReal = error?.message || JSON.stringify(error) || "Error desconocido al procesar.";
+        const mensajeReal = error?.message || JSON.stringify(error) || "Error desconocido.";
         setErrorMsg(`Error: ${mensajeReal}`);
         setStatus('error');
       }
@@ -95,19 +96,20 @@ export default function App() {
   const handleReset = () => {
     setStatus('idle');
     setSingleData(null);
+    setCurrentSingleFile(null);
     setBatchItems([]);
     setErrorMsg(null);
     setSingleFilePreview(null);
     setIsSending(false);
   };
 
-  // --- CONFIRMACIÓN UN DOCUMENTO ---
+  // --- CONFIRMACIÓN SINGLE (Modificado para enviar archivo) ---
   const handleConfirmSingle = async () => {
-    if (!singleData) return;
+    if (!singleData || !currentSingleFile) return;
     setIsSending(true);
     
     try {
-      await sendToN8N(singleData);
+      await sendToN8N(singleData, currentSingleFile); // Pasamos datos Y archivo
       setIsSending(false);
       setShowSuccessToast(true);
       setTimeout(() => {
@@ -117,20 +119,18 @@ export default function App() {
     } catch (error) {
       console.error("Fallo al enviar a n8n", error);
       setIsSending(false);
-      setErrorMsg("Error al guardar en el servidor.");
+      setErrorMsg("Error al subir documento.");
     }
   };
 
-  // --- CONFIRMACIÓN LOTE (MODIFICADO: SECUENCIAL CON PAUSA) ---
+  // --- CONFIRMACIÓN BATCH (Modificado para enviar archivo) ---
   const handleConfirmBatch = async () => {
     if (batchItems.length === 0) return;
     setIsSending(true);
 
     try {
-      // Enviamos uno a uno con pausa para no saturar Google Sheets
       for (const item of batchItems) {
-        await sendToN8N(item.data);
-        // ⏳ Pausa de 2 segundos entre envíos (CRÍTICO PARA QUE FUNCIONE BIEN)
+        await sendToN8N(item.data, item.file); // Pasamos datos Y archivo
         await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
@@ -157,7 +157,6 @@ export default function App() {
 
   return (
     <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-blue-500/30 overflow-hidden relative">
-      
       {/* Background Ambience */}
       <div className="absolute inset-0 pointer-events-none z-0">
         <div className="absolute -top-[20%] -left-[10%] w-[70%] h-[70%] bg-blue-900/10 rounded-full blur-[120px]" />
@@ -178,17 +177,14 @@ export default function App() {
         </p>
       </header>
 
-      {/* Main Content Area */}
+      {/* Main Content */}
       <main className="flex-1 flex flex-col items-center justify-start p-4 md:p-6 w-full relative z-10 max-w-7xl mx-auto overflow-y-auto">
-        
-        {/* State: IDLE */}
         {status === 'idle' && !showSuccessToast && (
           <div className="w-full mt-4 md:mt-8 animate-fadeIn">
             <UploadArea onFilesSelected={handleFilesSelect} />
           </div>
         )}
 
-        {/* State: ANALYZING */}
         {status === 'analyzing' && (
           <div className="flex flex-col items-center justify-center space-y-8 mt-12 animate-fadeIn w-full">
             <div className="relative">
@@ -205,21 +201,15 @@ export default function App() {
                 }
               </h3>
               <p className="text-slate-400 text-lg">Extrayendo datos financieros y clasificando...</p>
-              
-              {/* Progress Bar for Batch */}
               {processingProgress.total > 1 && (
                 <div className="w-72 h-1.5 bg-slate-800 rounded-full mt-6 overflow-hidden mx-auto">
-                  <div 
-                    className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300 ease-out"
-                    style={{ width: `${(processingProgress.current / processingProgress.total) * 100}%` }}
-                  />
+                  <div className="h-full bg-gradient-to-r from-blue-500 to-indigo-500 transition-all duration-300 ease-out" style={{ width: `${(processingProgress.current / processingProgress.total) * 100}%` }} />
                 </div>
               )}
             </div>
           </div>
         )}
 
-        {/* State: REVIEW SINGLE */}
         {status === 'review_single' && singleData && !showSuccessToast && (
           <ResultCard 
             data={singleData} 
@@ -232,7 +222,6 @@ export default function App() {
           />
         )}
 
-        {/* State: REVIEW BATCH */}
         {status === 'review_batch' && batchItems.length > 0 && !showSuccessToast && (
           <BatchSummary 
             items={batchItems}
@@ -243,7 +232,6 @@ export default function App() {
           />
         )}
 
-        {/* State: ERROR */}
         {status === 'error' && (
           <div className="w-full max-w-md mx-auto mt-8 animate-shake">
             <div className="bg-red-500/5 border border-red-500/20 rounded-3xl p-8 text-center space-y-6 backdrop-blur-sm">
@@ -252,21 +240,13 @@ export default function App() {
               </div>
               <div>
                 <h3 className="text-xl font-bold text-white mb-2">Error de Lectura</h3>
-                <p className="text-slate-400 leading-relaxed break-words text-sm">
-                  {errorMsg}
-                </p>
+                <p className="text-slate-400 leading-relaxed break-words text-sm">{errorMsg}</p>
               </div>
-              <button 
-                onClick={handleReset}
-                className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3.5 rounded-xl transition-all border border-slate-700"
-              >
-                Intentar de nuevo
-              </button>
+              <button onClick={handleReset} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3.5 rounded-xl transition-all border border-slate-700">Intentar de nuevo</button>
             </div>
           </div>
         )}
 
-        {/* SUCCESS TOAST */}
         {showSuccessToast && (
            <div className="fixed inset-0 flex items-center justify-center z-[200] animate-fadeIn bg-slate-950/60 backdrop-blur-sm p-4">
              <div className="bg-slate-900 border border-slate-800 p-8 md:p-10 rounded-[2.5rem] shadow-2xl flex flex-col items-center text-center space-y-6 max-w-sm w-full relative overflow-hidden animate-scaleIn">
@@ -281,10 +261,8 @@ export default function App() {
              </div>
            </div>
         )}
-
       </main>
 
-      {/* Footer */}
       <footer className="py-6 text-center text-slate-700 text-xs z-10 relative flex-shrink-0">
         <p>&copy; 2024 GestorIA Enterprise Solutions</p>
       </footer>
